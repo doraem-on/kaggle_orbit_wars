@@ -1,5 +1,6 @@
 from world_model import GameState, Planet, Fleet
 from planner import BeamSearchPlanner, GreedyPlanner
+from mcts_planner import MCTSPlanner
 from ml_planner import MLPlanner
 from geometry import line_intersects_circle
 from constants import CENTER, SUN_RADIUS
@@ -36,11 +37,14 @@ def agent(observation, configuration=None):
         if state.step < 16:
             planner = GreedyPlanner(state)
         else:
-            # Try to use MLPlanner, fallback to BeamSearch
+            # Try to use AlphaZero-style MCTS, fallback to pure Neural Net, fallback to BeamSearch
             try:
-                planner = MLPlanner(state)
+                planner = MCTSPlanner(state, max_time=0.8)
             except Exception as e:
-                planner = BeamSearchPlanner(state, max_time=0.8)
+                try:
+                    planner = MLPlanner(state)
+                except Exception:
+                    planner = BeamSearchPlanner(state, max_time=0.8)
         
         moves = planner.generate_moves()
 

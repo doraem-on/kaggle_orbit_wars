@@ -43,7 +43,7 @@ def run_match_subprocess(p0_type, p1_type, seed):
         for k in to_del: del sys.modules[k]
 
     from planner import GreedyPlanner as NewGOP
-    from ml_planner import MLPlanner as NewMLP
+    from mcts_planner import MCTSPlanner as NewMCTS
     from world_model import GameState as NewGS
     from simulator import Simulator as NewSim
 
@@ -64,7 +64,7 @@ def run_match_subprocess(p0_type, p1_type, seed):
         if p0_type == "new":
             s0 = NewGS(MockObs(step=step, player=0, planets=plist, fleets=flist), config)
             s0.params.update(new_weights)
-            a0 = NewGOP(s0).generate_moves() if step < 16 else NewMLP(s0).generate_moves()
+            a0 = NewGOP(s0).generate_moves() if step < 16 else NewMCTS(s0, max_time=0.1).generate_moves()
         else:
             sys.path.insert(0, "./old_bot")
             from old_bot.planner import BeamSearchPlanner as OldBSP_local
@@ -77,7 +77,7 @@ def run_match_subprocess(p0_type, p1_type, seed):
         if p1_type == "new":
             s1 = NewGS(MockObs(step=step, player=1, planets=plist, fleets=flist), config)
             s1.params.update(new_weights)
-            a1 = NewGOP(s1).generate_moves() if step < 16 else NewMLP(s1).generate_moves()
+            a1 = NewGOP(s1).generate_moves() if step < 16 else NewMCTS(s1, max_time=0.1).generate_moves()
         else:
             sys.path.insert(0, "./old_bot")
             from old_bot.planner import BeamSearchPlanner as OldBSP_local

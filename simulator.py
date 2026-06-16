@@ -60,6 +60,22 @@ class Simulator:
             })
             self.next_fleet_id += 1
 
+    def clone(self):
+        # Extremely fast shallow/deep copy for MCTS
+        new_sim = Simulator.__new__(Simulator)
+        new_sim.step = self.step
+        new_sim.next_fleet_id = self.next_fleet_id
+        
+        # Dict of dicts -> fast copy
+        new_sim.planets = {}
+        for p_id, p in self.planets.items():
+            new_sim.planets[p_id] = p.copy()
+            
+        # List of dicts -> fast copy
+        new_sim.fleets = [f.copy() for f in self.fleets]
+        
+        return new_sim
+
     def simulate_ahead(self, turns: int):
         for _ in range(turns):
             self.step += 1
