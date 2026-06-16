@@ -38,13 +38,21 @@ class MCTSPlanner:
         # Quick heuristic evaluation at leaf
         my_ships = sum(p["ships"] for p in sim.planets.values() if p["owner"] == player_id)
         my_ships += sum(f["ships"] for f in sim.fleets if f["owner"] == player_id)
+        my_planets = sum(1 for p in sim.planets.values() if p["owner"] == player_id)
         
-        enemy_ships = sum(p["ships"] for p in sim.planets.values() if p["owner"] not in (-1, player_id))
-        enemy_ships += sum(f["ships"] for f in sim.fleets if f["owner"] not in (-1, player_id))
+        enemy_ships = []
+        for enemy_id in range(4):
+            if enemy_id == player_id: continue
+            es = sum(p["ships"] for p in sim.planets.values() if p["owner"] == enemy_id)
+            es += sum(f["ships"] for f in sim.fleets if f["owner"] == enemy_id)
+            enemy_ships.append(es)
+            
+        max_enemy = max(enemy_ships) if enemy_ships else 0
         
-        diff = my_ships - enemy_ships
-        # Squash to -1 to 1
-        return math.tanh(diff / 100.0)
+        # FFA Heuristic: Beat the leader, but aggressively expand.
+        # Owning planets is extremely valuable because of passive production.
+        diff = my_ships - max_enemy + (my_planets * 1000)
+        return math.tanh(diff / 1000.0)
 
     def generate_moves(self):
         start_time = time.time()
@@ -132,25 +140,19 @@ class MCTSPlanner:
         base_moves = self.ml_planner.generate_moves() # List of (p_id, angle, ships)
         self.ml_planner.state = original_state
         
-        if not base_moves:
-            return
-            
         # Neural Network proposes a primary compound move.
-        # We will generate variations (mutations) of this move for MCTS to explore.
-        # Variation 1: The exact NN move (Prior=0.5)
-        self._add_child(node, base_moves, prior=0.5)
-        
-        # Variation 2-5: Randomly perturbed angles or ships (Priors=0.1)
-        for _ in range(5):
-            mutated_moves = []
-            for m in base_moves:
-                if random.random() < 0.5:
-                    new_angle = m[1] + random.uniform(-0.2, 0.2)
-                    new_ships = max(1, int(m[2] * random.uniform(0.8, 1.2)))
-                    mutated_moves.append((m[0], new_angle, new_ships))
-                else:
-                    mutated_moves.append(m)
-            self._add_child(node, mutated_moves, prior=0.1)
+        if base_moves:
+            self._add_child(node, base_moves, prior=0.5)
+            for _ in range(5):
+                mutated_moves = []
+                for m in base_moves:
+                    if random.random() < 0.5:
+                        new_angle = m[1] + random.uniform(-0.2, 0.2)
+                        new_ships = max(1, int(m[2] * random.uniform(0.8, 1.2)))
+                        mutated_moves.append((m[0], new_angle, new_ships))
+                    else:
+                        mutated_moves.append(m)
+                self._add_child(node, mutated_moves, prior=0.1)
             
     def _add_child(self, node, moves, prior):
         # Create a new simulator and apply the moves

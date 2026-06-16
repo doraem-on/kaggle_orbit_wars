@@ -42,9 +42,18 @@ class MLPlanner:
         # In training, we iterated through obs["planets"].
         # Here we iterate through self.state.planets (which is a dict keyed by id)
         
-        # Sort planets by ID to match training assumption if we assumed order (or use ID directly)
         sorted_planets = sorted(self.state.planets.values(), key=lambda p: p.id)
         
+        # Find strongest enemy to trick the Neural Network
+        enemy_scores = {}
+        for p in sorted_planets:
+            if p.owner not in (-1, self.state.player_id):
+                enemy_scores[p.owner] = enemy_scores.get(p.owner, 0) + p.ships
+        
+        strongest_enemy = None
+        if enemy_scores:
+            strongest_enemy = max(enemy_scores, key=enemy_scores.get)
+            
         # Calculate incoming fleets per planet
         incoming_allied = {}
         incoming_enemy = {}
@@ -74,7 +83,15 @@ class MLPlanner:
         for i in range(MAX_PLANETS):
             if i < len(sorted_planets):
                 p = sorted_planets[i]
-                owner_flag = 1 if p.owner == self.state.player_id else (-1 if p.owner != -1 else 0)
+                
+                # The Trick: Only the strongest opponent is "-1" (Enemy). Other players are "0" (Neutral).
+                if p.owner == self.state.player_id:
+                    owner_flag = 1
+                elif p.owner == strongest_enemy:
+                    owner_flag = -1
+                else:
+                    owner_flag = 0
+                    
                 my_inc = incoming_allied.get(p.id, 0)
                 en_inc = incoming_enemy.get(p.id, 0)
                 

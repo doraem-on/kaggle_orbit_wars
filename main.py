@@ -47,8 +47,12 @@ def agent(observation, configuration=None):
                     planner = BeamSearchPlanner(state, max_time=0.8)
         
         moves = planner.generate_moves()
+        
+        # Hybrid Fallback: If Neural Network is silent, forcefully use BeamSearch
+        if not moves and state.step >= 16:
+            moves = BeamSearchPlanner(state, max_time=0.4).generate_moves()
 
-        # 4. Final safety filter — never send a fleet into the sun
+        # 1. Final safety filter — never send a fleet into the sun
         actions = []
         for m in moves:
             planet_id, angle, ships = m[0], m[1], m[2]

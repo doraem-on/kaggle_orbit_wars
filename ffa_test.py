@@ -2,7 +2,8 @@ import json
 import time
 from world_model import GameState
 from simulator import Simulator
-from planner import BeamSearchPlanner, GreedyOpeningPlanner
+from planner import BeamSearchPlanner, GreedyPlanner
+from mcts_planner import MCTSPlanner
 
 class MockObs:
     def __init__(self, step=0, player=0, planets=None, fleets=None, angular_velocity=0.025):
@@ -58,7 +59,7 @@ def run_ffa():
     sim.fleets = []
     
     print("Starting 4-Player Free-For-All Simulation (400 Turns)")
-    print("Player 0: TUNED CHAMPION BOT")
+    print("Player 0: NEW MCTS ML BOT")
     print("Player 1, 2, 3: Original Baseline Bots\n")
     
     start_time = time.time()
@@ -87,9 +88,14 @@ def run_ffa():
                 state.params.update(baseline_weights)
                 
             if step < 15:
-                acts = GreedyOpeningPlanner(state).generate_moves()
+                acts = GreedyPlanner(state).generate_moves()
             else:
-                acts = BeamSearchPlanner(state, max_time=0.1).generate_moves()
+                if player_id == 0:
+                    acts = MCTSPlanner(state, max_time=0.1).generate_moves()
+                    if not acts:
+                        acts = BeamSearchPlanner(state, max_time=0.1).generate_moves()
+                else:
+                    acts = BeamSearchPlanner(state, max_time=0.1).generate_moves()
             all_actions.extend(acts)
             
         for act in all_actions:
