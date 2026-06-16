@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Orbit Wars Replay</title>
+    <style>
+        body { font-family: sans-serif; background: #111; color: white; display: flex; flex-direction: column; align-items: center; }
+        canvas { border: 1px solid #333; background: #000; margin-top: 20px; }
+        .controls { margin-top: 10px; display: flex; gap: 10px; align-items: center; }
+        button { padding: 5px 15px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h2>Orbit Wars Replay Viewer</h2>
+    <input type="file" id="fileInput" accept=".json" />
+    <div class="controls">
+        <button id="btnPrev">&lt; Prev</button>
+        <span id="turnLabel">Turn: 0</span>
+        <button id="btnNext">Next &gt;</button>
+        <button id="btnPlay">Play</button>
+    </div>
+    <canvas id="gameCanvas" width="800" height="800"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const SCALE = 8; // 100x100 board -> 800x800
+
+        let replayData = [];
+        let currentStep = 0;
+        let playing = false;
+        let playInterval = null;
+
+        const colors = {
+            '-1': '#888',
+            '0': '#44f',
+            '1': '#f44'
+        };
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                replayData = JSON.parse(e.target.result);
+                currentStep = 0;
+                drawState();
+            };
+            reader.readAsText(file);
+        });
+
+        function drawState() {
+            if (replayData.length === 0) return;
+            const state = replayData[currentStep];
+            document.getElementById('turnLabel').innerText = `Turn: ${state.step}`;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Sun
+            ctx.fillStyle = '#ffcc00';
+            ctx.beginPath();
+            ctx.arc(50 * SCALE, 50 * SCALE, 10 * SCALE, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw Planets
+            state.planets.forEach(p => {
+                const owner = p[1];
+                const x = p[2] * SCALE;
+                const y = p[3] * SCALE;
+                const radius = p[4] * SCALE;
+                const ships = p[5];
+                const prod = p[6];
+
+                ctx.fillStyle = colors[owner];
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.stroke();
+
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`S:${ships} P:${prod}`, x, y + 4);
+            });
+
+            // Draw Fleets
+            state.fleets.forEach(f => {
+                const owner = f[1];
+                const x = f[2] * SCALE;
+                const y = f[3] * SCALE;
+                const ships = f[6];
+
+                ctx.fillStyle = colors[owner];
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = 'white';
+                ctx.font = '10px Arial';
+                ctx.fillText(ships, x, y - 6);
+            });
+        }
+
+        document.getElementById('btnNext').addEventListener('click', () => {
+            if (currentStep < replayData.length - 1) {
+                currentStep++;
+                drawState();
+            }
+        });
+
+        document.getElementById('btnPrev').addEventListener('click', () => {
+            if (currentStep > 0) {
+                currentStep--;
+                drawState();
+            }
+        });
+
+        document.getElementById('btnPlay').addEventListener('click', () => {
+            if (playing) {
+                playing = false;
+                clearInterval(playInterval);
+                document.getElementById('btnPlay').innerText = 'Play';
+            } else {
+                playing = true;
+                document.getElementById('btnPlay').innerText = 'Pause';
+                playInterval = setInterval(() => {
+                    if (currentStep < replayData.length - 1) {
+                        currentStep++;
+                        drawState();
+                    } else {
+                        playing = false;
+                        clearInterval(playInterval);
+                        document.getElementById('btnPlay').innerText = 'Play';
+                    }
+                }, 100);
+            }
+        });
+    </script>
+</body>
+</html>

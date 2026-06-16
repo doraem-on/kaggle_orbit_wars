@@ -1,0 +1,245 @@
+{
+    "best_config": {},
+    "history": [
+        {
+            "iteration": 0,
+            "config": {
+                "defense_score_multiplier": 80.37697091987832,
+                "attack_score_multiplier": 21.88213531083296,
+                "defense_buffer_ships": 2,
+                "reserve_ships_min": 5
+            },
+            "winrate": 0.25
+        },
+        {
+            "iteration": 1,
+            "config": {
+                "defense_score_multiplier": 97.87091114751827,
+                "attack_score_multiplier": 13.598304285392267,
+                "defense_buffer_ships": 5,
+                "reserve_ships_min": 6
+            },
+            "winrate": 0.25
+        },
+        {
+            "iteration": 0,
+            "config": {
+                "defense_score_multiplier": 72.08290864074156,
+                "attack_score_multiplier": 39.888458350043635,
+                "defense_buffer_ships": 6,
+                "reserve_ships_min": 9
+            },
+            "winrate": 0.34
+        },
+        {
+            "iteration": 1,
+            "config": {
+                "defense_score_multiplier": 48.12775419433915,
+                "attack_score_multiplier": 27.880227634250026,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 1
+            },
+            "winrate": 0.48
+        },
+        {
+            "iteration": 2,
+            "config": {
+                "defense_score_multiplier": 58.39180282327632,
+                "attack_score_multiplier": 16.400754244827368,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 5
+            },
+            "winrate": 0.3
+        },
+        {
+            "iteration": 3,
+            "config": {
+                "defense_score_multiplier": 40.85381335567245,
+                "attack_score_multiplier": 27.58554810832759,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 8
+            },
+            "winrate": 0.28
+        },
+        {
+            "iteration": 4,
+            "config": {
+                "defense_score_multiplier": 92.31770779179614,
+                "attack_score_multiplier": 13.456764465039608,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 6
+            },
+            "winrate": 0.32
+        },
+        {
+            "iteration": 5,
+            "config": {
+                "defense_score_multiplier": 34.599179532436644,
+                "attack_score_multiplier": 16.680443669305724,
+                "defense_buffer_ships": 2,
+                "reserve_ships_min": 6
+            },
+            "winrate": 0.42
+        },
+        {
+            "iteration": 6,
+            "config": {
+                "defense_score_multiplier": 43.764812595067575,
+                "attack_score_multiplier": 23.202596709554115,
+                "defense_buffer_ships": 6,
+                "reserve_ships_min": 4
+            },
+            "winrate": 0.4
+        },
+        {
+            "iteration": 7,
+            "config": {
+                "defense_score_multiplier": 30.144208425309245,
+                "attack_score_multiplier": 8.08674355669526,
+                "defense_buffer_ships": 2,
+                "reserve_ships_min": 9
+            },
+            "winrate": 0.28
+        },
+        {
+            "iteration": 8,
+            "config": {
+                "defense_score_multiplier": 42.75949395761203,
+                "attack_score_multiplier": 36.337085581261476,
+                "defense_buffer_ships": 0,
+                "reserve_ships_min": 8
+            },
+            "winrate": 0.26
+        },
+        {
+            "iteration": 9,
+            "config": {
+                "defense_score_multiplier": 52.08028574969027,
+                "attack_score_multiplier": 11.503222552652392,
+                "defense_buffer_ships": 9,
+                "reserve_ships_min": 2
+            },
+            "winrate": 0.42
+        },
+        {
+            "iteration": 0,
+            "config": {
+                "defense_score_multiplier": 68.20828373123841,
+                "attack_score_multiplier": 35.32850163268674,
+                "defense_buffer_ships": 9,
+                "reserve_ships_min": 1
+            },
+            "winrate": 0.4
+        },
+        {
+            "iteration": 1,
+            "config": {
+                "defense_score_multiplier": 67.54028527492035,
+                "attack_score_multiplier": 12.118987628231253,
+                "defense_buffer_ships": 4,
+                "reserve_ships_min": 6
+            },
+            "winrate": 0.3
+        },
+        {
+            "iteration": 2,
+            "config": {
+                "defense_score_multiplier": 60.25612400748959,
+                "attack_score_multiplier": 5.701506613461561,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 6
+            },
+            "winrate": 0.4
+        },
+        {
+            "iteration": 3,
+            "config": {
+                "defense_score_multiplier": 39.76578662239728,
+                "attack_score_multiplier": 6.394099924508223,
+                "defense_buffer_ships": 7,
+                "reserve_ships_min": 6
+            },
+            "winrate": 0.24
+        },
+        {
+            "iteration": 4,
+            "config": {
+                "defense_score_multiplier": 89.54614394341586,
+                "attack_score_multiplier": 8.723885725076325,
+                "defense_buffer_ships": 4,
+                "reserve_ships_min": 11
+            },
+            "winrate": 0.34
+        },
+        {
+            "iteration": 5,
+            "config": {
+                "defense_score_multiplier": 30.106722832337745,
+                "attack_score_multiplier": 10.15486085293833,
+                "defense_buffer_ships": 1,
+                "reserve_ships_min": 1
+            },
+            "winrate": 0.46
+        },
+        {
+            "iteration": 6,
+            "config": {
+                "defense_score_multiplier": 67.44422161623748,
+                "attack_score_multiplier": 31.656640497583847,
+                "defense_buffer_ships": 9,
+                "reserve_ships_min": 8
+            },
+            "winrate": 0.3
+        },
+        {
+            "iteration": 7,
+            "config": {
+                "defense_score_multiplier": 85.68013288161752,
+                "attack_score_multiplier": 16.14899038927903,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 5
+            },
+            "winrate": 0.36
+        },
+        {
+            "iteration": 8,
+            "config": {
+                "defense_score_multiplier": 31.265920208314284,
+                "attack_score_multiplier": 38.08291834383388,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 3
+            },
+            "winrate": 0.42
+        },
+        {
+            "iteration": 9,
+            "config": {
+                "defense_score_multiplier": 28.021831664154302,
+                "attack_score_multiplier": 33.288598341818485,
+                "defense_buffer_ships": 10,
+                "reserve_ships_min": 3
+            },
+            "winrate": 0.4
+        },
+        {
+            "iteration": 0,
+            "config": {
+                "defense_score_multiplier": 37.10273439226981,
+                "attack_score_multiplier": 18.333683213851582,
+                "defense_buffer_ships": 8,
+                "reserve_ships_min": 10
+            },
+            "winrate": 0.0
+        },
+        {
+            "iteration": 1,
+            "config": {
+                "defense_score_multiplier": 71.15772867245536,
+                "attack_score_multiplier": 33.53682872420697,
+                "defense_buffer_ships": 10,
+                "reserve_ships_min": 2
+            },
+            "winrate": 0.0
+        }
+    ]
+}
