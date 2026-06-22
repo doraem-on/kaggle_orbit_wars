@@ -465,15 +465,14 @@ class Planner:
                 garrison = tgt.ships
                 if not neutral:
                     garrison += tgt.production * t1
-                    # Same-owner reinforcements heading there
                     garrison += self.intel.by_owner.get(tgt.owner, {}).get(tgt.id, 0)
 
-                # Subtract our fleets already committed
-                garrison -= self.intel.allied_to.get(tgt.id, 0)
-                garrison = max(0, garrison)
-
                 buf = 3 + (tgt.production * 2 if not neutral else 0)
-                need = garrison + buf
+                total_need = garrison + buf - self.intel.allied_to.get(tgt.id, 0)
+
+                if total_need <= 0:
+                    continue
+                need = int(total_need)
 
                 # ── Pass 2: refine with actual speed ──
                 spd = fleet_speed(max(1, need))
@@ -486,11 +485,11 @@ class Planner:
                 if not neutral:
                     garrison = tgt.ships + tgt.production * t2
                     garrison += self.intel.by_owner.get(tgt.owner, {}).get(tgt.id, 0)
-                    garrison -= self.intel.allied_to.get(tgt.id, 0)
-                    garrison = max(0, garrison)
-                    need = garrison + buf
-
-                need = max(1, int(need))
+                
+                total_need = garrison + buf - self.intel.allied_to.get(tgt.id, 0)
+                if total_need <= 0:
+                    continue
+                need = max(1, int(total_need))
 
                 # ── Score ──
                 if tgt.is_comet and tgt.comet_path:
@@ -561,11 +560,11 @@ class Planner:
             if send <= 0:
                 continue
 
-            # Don't send futile partial attacks
-            if m["type"] == "C" and committed[tid] == 0:
-                min_frac = MIN_ATTACK_FRAC[self.phase]
-                if send < m["need"] * min_frac and m["need"] > 5:
-                    continue
+            # Universal Anti-Trickle: Every fleet must be independently potent 
+            # or a significant fraction of the required force.
+            min_frac = MIN_ATTACK_FRAC[self.phase]
+            if send < m["need"] * min_frac and send < 25:
+                continue
 
             moves.append((sid, m["angle"], int(send)))
             avail[sid] -= send
@@ -577,7 +576,8 @@ class Planner:
         if not moves and self.phase >= PHASE_LATE:
             enemy_planets = self.st.enemies()
             for src in my:
-                if avail.get(src.id, 0) <= 1:
+                can_send = avail.get(src.id, 0)
+                if can_send < 15:  # No trickling in fallback!
                     continue
                 # Attack nearest enemy
                 best_tgt, best_d = None, 1e9
@@ -596,7 +596,7 @@ class Planner:
                     a, t = self._intercept(src.pos, best_tgt, spd)
                     tgt_pos = best_tgt.future(t)
                     if not self._sun_blocked(src, a, tgt_pos):
-                        send = max(1, avail[src.id] - 1)
+                        send = can_send - 1
                         moves.append((src.id, a, send))
                         avail[src.id] -= send
 
