@@ -338,6 +338,22 @@ class Simulator:
             })
             self.next_fleet_id += 1
 
+    def clone(self):
+        # Extremely fast shallow/deep copy for MCTS
+        new_sim = Simulator.__new__(Simulator)
+        new_sim.step = self.step
+        new_sim.next_fleet_id = self.next_fleet_id
+        
+        # Dict of dicts -> fast copy
+        new_sim.planets = {}
+        for p_id, p in self.planets.items():
+            new_sim.planets[p_id] = p.copy()
+            
+        # List of dicts -> fast copy
+        new_sim.fleets = [f.copy() for f in self.fleets]
+        
+        return new_sim
+
     def simulate_ahead(self, turns: int):
         for _ in range(turns):
             self.step += 1
@@ -449,24 +465,19 @@ class Simulator:
 def evaluate_state(simulator, player_id: int) -> float:
     """
     Evaluates a simulated game state from the perspective of player_id.
+    FFA-aware: compares against the strongest opponent, not the sum of all enemies.
     """
     score = 0.0
     
     my_production = 0
-    enemy_production = 0
     my_ships = 0
-    enemy_ships = 0
     my_planets = 0
-    enemy_planets = 0
     
-    # Phase scaling: as game nears end, production matters less, total ships matter more
-    turns_left = max(0, MAX_TURNS - simulator.step)
-    prod_weight = WEIGHT_PRODUCTION * (turns_left / MAX_TURNS)
-    ships_weight = WEIGHT_TOTAL_SHIPS * (1.0 + (MAX_TURNS - turns_left) / MAX_TURNS)
+    # Track each opponent independently (FFA)
+    enemy_stats = {}
     
     for p in simulator.planets.values():
         val = p["production"]
-        # Discount comet production based on how long it has left
         if p["is_comet"] and p["comet_path"]:
             comet_turns_left = len(p["comet_path"]) - p["comet_path_index"]
             val *= min(1.0, comet_turns_left / 50.0)
@@ -476,19 +487,43 @@ def evaluate_state(simulator, player_id: int) -> float:
             my_ships += p["ships"]
             my_planets += 1
         elif p["owner"] != -1:
-            enemy_production += val
-            enemy_ships += p["ships"]
-            enemy_planets += 1
+            eid = p["owner"]
+            if eid not in enemy_stats:
+                enemy_stats[eid] = {"production": 0, "ships": 0, "planets": 0}
+            enemy_stats[eid]["production"] += val
+            enemy_stats[eid]["ships"] += p["ships"]
+            enemy_stats[eid]["planets"] += 1
             
     for f in simulator.fleets:
         if f["owner"] == player_id:
             my_ships += f["ships"]
         elif f["owner"] != -1:
-            enemy_ships += f["ships"]
-
-    score += (my_production - enemy_production) * prod_weight
-    score += (my_ships - enemy_ships) * ships_weight
-    score += (my_planets - enemy_planets) * WEIGHT_CONTROLLED_PLANETS
+            eid = f["owner"]
+            if eid not in enemy_stats:
+                enemy_stats[eid] = {"production": 0, "ships": 0, "planets": 0}
+            enemy_stats[eid]["ships"] += f["ships"]
+    
+    if not enemy_stats:
+        # No enemies — we already won
+        return 10000.0
+    
+    # Phase scaling
+    turns_left = max(0, MAX_TURNS - simulator.step)
+    prod_weight = WEIGHT_PRODUCTION * (turns_left / MAX_TURNS)
+    ships_weight = WEIGHT_TOTAL_SHIPS * (1.0 + (MAX_TURNS - turns_left) / MAX_TURNS)
+    
+    # FFA: We only need to beat the strongest single opponent
+    max_enemy_ships = max(es["ships"] for es in enemy_stats.values())
+    max_enemy_production = max(es["production"] for es in enemy_stats.values())
+    max_enemy_planets = max(es["planets"] for es in enemy_stats.values())
+    
+    score += (my_production - max_enemy_production) * prod_weight
+    score += (my_ships - max_enemy_ships) * ships_weight
+    score += (my_planets - max_enemy_planets) * WEIGHT_CONTROLLED_PLANETS
+    
+    # Bonus for having more planets than ANY single opponent (production snowball)
+    if my_planets > max_enemy_planets:
+        score += (my_planets - max_enemy_planets) * 10.0
     
     return score
 
@@ -499,6 +534,7 @@ class ActionGenerator:
         self.state = state
         self.arrivals = {p.id: {} for p in self.state.planets.values()}
         self.incoming_enemy = {p.id: 0 for p in self.state.planets.values()}
+        self.incoming_allied = {p.id: 0 for p in self.state.planets.values()}
         
         for f in self.state.fleets:
             target_id = self.get_fleet_target(f)
@@ -509,6 +545,8 @@ class ActionGenerator:
                 
                 if f.owner != self.state.player_id:
                     self.incoming_enemy[target_id] += f.ships
+                else:
+                    self.incoming_allied[target_id] += f.ships
                     
                 if turns not in self.arrivals[target_id]:
                     self.arrivals[target_id][turns] = {}
@@ -574,13 +612,22 @@ class ActionGenerator:
     def get_candidate_targets(self, source_planet, available_ships, max_targets=3):
         candidates = []
         source_reserve = max(self.state.params["reserve_ships_min"], self.incoming_enemy.get(source_planet.id, 0))
+        max_sendable = available_ships - source_reserve
+
+        # FFA: Track strongest opponent for leader-targeting
+        enemy_prod = {}
+        for p in self.state.planets.values():
+            if p.owner not in (-1, self.state.player_id):
+                enemy_prod[p.owner] = enemy_prod.get(p.owner, 0) + p.production
+        leader_id = max(enemy_prod, key=enemy_prod.get) if enemy_prod else None
 
         for target in self.state.planets.values():
             if target.id == source_planet.id:
                 continue
 
-            required_ships_base = target.ships
-            speed = get_fleet_speed(max(1, required_ships_base + 5))
+            # Estimate ships we'd actually send (use a reasonable guess for speed calc)
+            est_send = min(max(1, int(target.ships * 1.5)), max_sendable)
+            speed = get_fleet_speed(est_send)
             
             if target.is_comet and target.comet_path:
                 angle, turns = get_path_intercept(source_planet.pos, speed, target.comet_path, target.comet_path_index, target.radius)
@@ -602,26 +649,32 @@ class ActionGenerator:
             is_mine = (target.owner == self.state.player_id)
             is_enemy = (target.owner != self.state.player_id and target.owner != -1)
             
-            # Robust needed calculation: count all enemy fleets currently flying towards it
-            needed = target.ships + self.incoming_enemy[target.id]
-            if is_enemy:
-                needed += target.production * turns
-            elif is_mine:
-                needed -= target.production * turns
-                
-            needed += self.state.params["defense_buffer_ships"]
+            # Account for all forces: garrison, production, incoming fleets (both sides)
+            garrison_upon_arrival = target.ships + (target.production * turns if target.owner != -1 else 0)
+            enemy_arriving = self.incoming_enemy.get(target.id, 0)
+            allied_arriving = self.incoming_allied.get(target.id, 0)
             
             if is_mine:
-                # If we already have more incoming allied ships than the enemy, we don't need to send more
-                if self.incoming_enemy[target.id] > (target.ships + target.production * turns): # Simplified check
-                    score = 1000 + target.production * self.state.params["defense_score_multiplier"] - turns
-                    needed = max(1, self.incoming_enemy[target.id] - target.ships - (target.production * turns))
+                # Proactive defense: send ships if the planet would be lost without reinforcement
+                net_enemy_after_defense = enemy_arriving - allied_arriving
+                needed = max(0, net_enemy_after_defense - garrison_upon_arrival) + self.state.params["defense_buffer_ships"]
+                if needed > 0:
+                    score = 1500 + target.production * self.state.params["defense_score_multiplier"] - turns
                 else:
+                    # Planet is safe with existing allied fleets — no need to send more
                     continue
+            elif is_enemy:
+                # Attack: we need to overcome garrison + production + enemy reinforcements
+                needed = garrison_upon_arrival + max(0, enemy_arriving - allied_arriving) + self.state.params["defense_buffer_ships"]
+                # FFA bonus: attacking the leader is worth more
+                leader_bonus = 200 if target.owner == leader_id else 0
+                score = (target.production * self.state.params["attack_score_multiplier"]) - turns + leader_bonus
             else:
+                # Neutral: just need to beat garrison (production only helps defender if it has an owner)
+                needed = garrison_upon_arrival + self.state.params["defense_buffer_ships"]
                 score = (target.production * self.state.params["attack_score_multiplier"]) - turns
                 
-            if available_ships - source_reserve > needed:
+            if max_sendable > needed:
                 candidates.append({
                     "target": target.id,
                     "angle": angle,
@@ -680,53 +733,64 @@ class BeamSearchPlanner:
     def generate_moves(self) -> List[Tuple[int, float, int]]:
         start_time = time.time()
         
-        # 1. Gather candidates for each planet
+        # 1. Gather candidates for each planet, tracking scores for ranking
         planet_moves = []
+        planet_move_scores = []  # parallel list: scores for each move option
+        
         for source in self.state.my_planets:
-            cands = self.generator.get_candidate_targets(source, source.ships, max_targets=2)
-            valid_moves = [None] # Null action
+            source_reserve = max(self.state.params["reserve_ships_min"], self.generator.incoming_enemy.get(source.id, 0))
+            cands = self.generator.get_candidate_targets(source, source.ships, max_targets=3)
+            valid_moves = [None]
+            move_scores = [0.0]  # null action = score 0
             for c in cands:
                 valid_moves.append((source.id, c["angle"], int(c["ships"])))
+                move_scores.append(c["score"])
                 
-                # Option to dump all remaining ships (Endgame Swarm)
-                source_reserve = max(self.state.params["reserve_ships_min"], self.generator.incoming_enemy.get(source.id, 0))
                 dump_amount = source.ships - source_reserve
-                if dump_amount > int(c["ships"]) + 10: # Only if it's significantly more
+                if dump_amount > int(c["ships"]) + 10:
                     valid_moves.append((source.id, c["angle"], dump_amount))
+                    move_scores.append(c["score"] + 5)  # slightly favor dumping in endgame
                     
             if len(valid_moves) > 1:
                 planet_moves.append(valid_moves)
+                planet_move_scores.append(move_scores)
                 
         if not planet_moves:
             return []
             
-        # 2. Generate combinations (Cartesian product)
-        # To avoid exploding, limit number of combinations
+        # 2. Generate and prioritize combinations
+        lookahead = 25
+        max_combos = 200
         all_combos = list(itertools.product(*planet_moves))
-        if len(all_combos) > 200:
-            # Sort individual planets by their best move score to prioritize
-            # But for simplicity, just truncate or use greedy fallback
-            pass
+        
+        if len(all_combos) > max_combos:
+            # Score each combo by sum of its move scores
+            combo_scores = []
+            for combo in all_combos:
+                total = 0.0
+                for i, m in enumerate(combo):
+                    if m is not None:
+                        idx = planet_moves[i].index(m)
+                        total += planet_move_scores[i][idx]
+                combo_scores.append((total, combo))
+            combo_scores.sort(key=lambda x: x[0], reverse=True)
+            all_combos = [c for _, c in combo_scores[:max_combos]]
             
         best_combo = None
         best_score = -999999
         
-        for combo in all_combos[:200]: # Cap at 200 combinations to ensure we don't timeout
+        for combo in all_combos:
             if time.time() - start_time > self.max_time:
                 break
                 
-            # Filter out Nones
             actual_moves = [m for m in combo if m is not None]
             
-            # Simulate
             sim = Simulator(self.state)
             for m in actual_moves:
                 sim.add_launch(m[0], m[1], m[2])
                 
-            sim.simulate_ahead(25) # Lookahead 25 turns
+            sim.simulate_ahead(lookahead)
             score = evaluate_state(sim, self.state.player_id)
-            
-            # Penalize slightly for launching ships to break ties and save ships when useless
             score -= len(actual_moves) * 0.1
             
             if score > best_score:
@@ -737,7 +801,9 @@ class BeamSearchPlanner:
 
 
 
-CUSTOM_WEIGHTS = {"alpha": 15.39371975905608, "beta": 0.5075510753597793, "gamma": 1.6605006076199749, "early_prod": 24.000150501014208, "mid_def": 20.899620258536384, "late_agg": 26.61356419079815}
+CUSTOM_WEIGHTS = {"alpha": 12.989837726043973, "beta": 0.6517052557438298, "gamma": 1.755443882883826, "early_prod": 19.541064085088347, "mid_def": 15.467696793480005, "late_agg": 25.097210080379742}
+
+BEAM_SEARCH_PHASE = 8
 
 class HistoryTracker:
     def __init__(self):
@@ -747,63 +813,62 @@ class HistoryTracker:
 
 tracker = HistoryTracker()
 
-def agent(observation, configuration=None):
-    """
-    Kaggle entry point.
-    Wrapped in try/except so no crash ever causes a forfeit.
-    """
-    global tracker
+def safety_filter(moves, state):
+    """Validate moves: owned planet, enough ships, no sun collision."""
+    actions = []
+    for m in moves:
+        planet_id, angle, ships = m[0], m[1], m[2]
+        if planet_id not in state.planets:
+            continue
+        p = state.planets[planet_id]
+        if p.owner != state.player_id:
+            continue
+        if ships <= 0 or ships > p.ships:
+            ships = min(max(1, ships), p.ships - 1)
+            if ships <= 0:
+                continue
+        fx = p.x + math.cos(angle) * (p.radius + 0.1)
+        fy = p.y + math.sin(angle) * (p.radius + 0.1)
+        far_x = fx + math.cos(angle) * 200
+        far_y = fy + math.sin(angle) * 200
+        if line_intersects_circle((fx, fy), (far_x, far_y), CENTER, SUN_RADIUS + 0.5):
+            continue
+        actions.append([planet_id, angle, ships])
+    return actions
 
+def agent(observation, configuration=None):
     try:
-        # 1. Parse state
         state = GameState(observation, configuration)
         state.params.update(CUSTOM_WEIGHTS)
 
-        # Track state between turns
-        if state.step > tracker.last_step + 1:
-            tracker.__init__()  # Reset on new match
-        tracker.last_step = state.step
-        state.tracker = tracker
-
-        # 2. Plan actions
-        if state.step < 16:
-            planner = GreedyOpeningPlanner(state)
+        if state.step < BEAM_SEARCH_PHASE or len(state.my_planets) < 2:
+            planner = GreedyPlanner(state)
+            moves = planner.generate_moves()
         else:
-            planner = BeamSearchPlanner(state, max_time=0.8)
-        
-        moves = planner.generate_moves()
+            try:
+                planner = BeamSearchPlanner(state, max_time=0.8)
+                moves = planner.generate_moves()
+                if not moves:
+                    moves = GreedyPlanner(state).generate_moves()
+                return safety_filter(moves, state)
+            except Exception:
+                pass
+            try:
+                from mcts_planner import MCTSPlanner as FallbackPlanner
+                planner = FallbackPlanner(state, max_time=0.8)
+            except Exception:
+                try:
+                    from ml_planner import MLPlanner as FallbackPlanner
+                    planner = FallbackPlanner(state)
+                except Exception:
+                    planner = BeamSearchPlanner(state, max_time=0.8)
+            moves = planner.generate_moves()
+            if not moves:
+                moves = GreedyPlanner(state).generate_moves()
 
-        # 4. Final safety filter — never send a fleet into the sun
-        actions = []
-        for m in moves:
-            planet_id, angle, ships = m[0], m[1], m[2]
-
-            # Validate: planet must be ours and have enough ships
-            if planet_id not in state.planets:
-                continue
-            p = state.planets[planet_id]
-            if p.owner != state.player_id:
-                continue
-            if ships <= 0 or ships > p.ships:
-                ships = min(max(1, ships), p.ships - 1)
-                if ships <= 0:
-                    continue
-
-            # Validate: fleet path must not hit the sun
-            import math
-            fx = p.x + math.cos(angle) * (p.radius + 0.1)
-            fy = p.y + math.sin(angle) * (p.radius + 0.1)
-            far_x = fx + math.cos(angle) * 200
-            far_y = fy + math.sin(angle) * 200
-            if line_intersects_circle((fx, fy), (far_x, far_y), CENTER, SUN_RADIUS + 0.5):
-                continue  # Would fly into the sun — skip
-
-            actions.append([planet_id, angle, ships])
-
-        return actions
+        return safety_filter(moves, state)
 
     except Exception:
-        # NEVER crash — return empty actions instead of forfeiting
         return []
 
 

@@ -12,6 +12,7 @@ class ActionGenerator:
         self.state = state
         self.arrivals = {p.id: {} for p in self.state.planets.values()}
         self.incoming_enemy = {p.id: 0 for p in self.state.planets.values()}
+        self.incoming_allied = {p.id: 0 for p in self.state.planets.values()}
         
         for f in self.state.fleets:
             target_id = self.get_fleet_target(f)
@@ -22,6 +23,8 @@ class ActionGenerator:
                 
                 if f.owner != self.state.player_id:
                     self.incoming_enemy[target_id] += f.ships
+                else:
+                    self.incoming_allied[target_id] += f.ships
                     
                 if turns not in self.arrivals[target_id]:
                     self.arrivals[target_id][turns] = {}
@@ -87,13 +90,22 @@ class ActionGenerator:
     def get_candidate_targets(self, source_planet, available_ships, max_targets=3):
         candidates = []
         source_reserve = max(self.state.params["reserve_ships_min"], self.incoming_enemy.get(source_planet.id, 0))
+        max_sendable = available_ships - source_reserve
+
+        # FFA: Track strongest opponent for leader-targeting
+        enemy_prod = {}
+        for p in self.state.planets.values():
+            if p.owner not in (-1, self.state.player_id):
+                enemy_prod[p.owner] = enemy_prod.get(p.owner, 0) + p.production
+        leader_id = max(enemy_prod, key=enemy_prod.get) if enemy_prod else None
 
         for target in self.state.planets.values():
             if target.id == source_planet.id:
                 continue
 
-            required_ships_base = target.ships
-            speed = get_fleet_speed(max(1, required_ships_base + 5))
+            # Estimate ships we'd actually send (use a reasonable guess for speed calc)
+            est_send = min(max(1, int(target.ships * 1.5)), max_sendable)
+            speed = get_fleet_speed(est_send)
             
             if target.is_comet and target.comet_path:
                 angle, turns = get_path_intercept(source_planet.pos, speed, target.comet_path, target.comet_path_index, target.radius)
@@ -115,26 +127,32 @@ class ActionGenerator:
             is_mine = (target.owner == self.state.player_id)
             is_enemy = (target.owner != self.state.player_id and target.owner != -1)
             
-            # Robust needed calculation: count all enemy fleets currently flying towards it
-            needed = target.ships + self.incoming_enemy[target.id]
-            if is_enemy:
-                needed += target.production * turns
-            elif is_mine:
-                needed -= target.production * turns
-                
-            needed += self.state.params["defense_buffer_ships"]
+            # Account for all forces: garrison, production, incoming fleets (both sides)
+            garrison_upon_arrival = target.ships + (target.production * turns if target.owner != -1 else 0)
+            enemy_arriving = self.incoming_enemy.get(target.id, 0)
+            allied_arriving = self.incoming_allied.get(target.id, 0)
             
             if is_mine:
-                # If we already have more incoming allied ships than the enemy, we don't need to send more
-                if self.incoming_enemy[target.id] > (target.ships + target.production * turns): # Simplified check
-                    score = 1000 + target.production * self.state.params["defense_score_multiplier"] - turns
-                    needed = max(1, self.incoming_enemy[target.id] - target.ships - (target.production * turns))
+                # Proactive defense: send ships if the planet would be lost without reinforcement
+                net_enemy_after_defense = enemy_arriving - allied_arriving
+                needed = max(0, net_enemy_after_defense - garrison_upon_arrival) + self.state.params["defense_buffer_ships"]
+                if needed > 0:
+                    score = 1500 + target.production * self.state.params["defense_score_multiplier"] - turns
                 else:
+                    # Planet is safe with existing allied fleets — no need to send more
                     continue
+            elif is_enemy:
+                # Attack: we need to overcome garrison + production + enemy reinforcements
+                needed = garrison_upon_arrival + max(0, enemy_arriving - allied_arriving) + self.state.params["defense_buffer_ships"]
+                # FFA bonus: attacking the leader is worth more
+                leader_bonus = 200 if target.owner == leader_id else 0
+                score = (target.production * self.state.params["attack_score_multiplier"]) - turns + leader_bonus
             else:
+                # Neutral: just need to beat garrison (production only helps defender if it has an owner)
+                needed = garrison_upon_arrival + self.state.params["defense_buffer_ships"]
                 score = (target.production * self.state.params["attack_score_multiplier"]) - turns
                 
-            if available_ships - source_reserve > needed:
+            if max_sendable > needed:
                 candidates.append({
                     "target": target.id,
                     "angle": angle,
@@ -193,53 +211,64 @@ class BeamSearchPlanner:
     def generate_moves(self) -> List[Tuple[int, float, int]]:
         start_time = time.time()
         
-        # 1. Gather candidates for each planet
+        # 1. Gather candidates for each planet, tracking scores for ranking
         planet_moves = []
+        planet_move_scores = []  # parallel list: scores for each move option
+        
         for source in self.state.my_planets:
-            cands = self.generator.get_candidate_targets(source, source.ships, max_targets=2)
-            valid_moves = [None] # Null action
+            source_reserve = max(self.state.params["reserve_ships_min"], self.generator.incoming_enemy.get(source.id, 0))
+            cands = self.generator.get_candidate_targets(source, source.ships, max_targets=3)
+            valid_moves = [None]
+            move_scores = [0.0]  # null action = score 0
             for c in cands:
                 valid_moves.append((source.id, c["angle"], int(c["ships"])))
+                move_scores.append(c["score"])
                 
-                # Option to dump all remaining ships (Endgame Swarm)
-                source_reserve = max(self.state.params["reserve_ships_min"], self.generator.incoming_enemy.get(source.id, 0))
                 dump_amount = source.ships - source_reserve
-                if dump_amount > int(c["ships"]) + 10: # Only if it's significantly more
+                if dump_amount > int(c["ships"]) + 10:
                     valid_moves.append((source.id, c["angle"], dump_amount))
+                    move_scores.append(c["score"] + 5)  # slightly favor dumping in endgame
                     
             if len(valid_moves) > 1:
                 planet_moves.append(valid_moves)
+                planet_move_scores.append(move_scores)
                 
         if not planet_moves:
             return []
             
-        # 2. Generate combinations (Cartesian product)
-        # To avoid exploding, limit number of combinations
+        # 2. Generate and prioritize combinations
+        lookahead = 25
+        max_combos = 200
         all_combos = list(itertools.product(*planet_moves))
-        if len(all_combos) > 200:
-            # Sort individual planets by their best move score to prioritize
-            # But for simplicity, just truncate or use greedy fallback
-            pass
+        
+        if len(all_combos) > max_combos:
+            # Score each combo by sum of its move scores
+            combo_scores = []
+            for combo in all_combos:
+                total = 0.0
+                for i, m in enumerate(combo):
+                    if m is not None:
+                        idx = planet_moves[i].index(m)
+                        total += planet_move_scores[i][idx]
+                combo_scores.append((total, combo))
+            combo_scores.sort(key=lambda x: x[0], reverse=True)
+            all_combos = [c for _, c in combo_scores[:max_combos]]
             
         best_combo = None
         best_score = -999999
         
-        for combo in all_combos[:200]: # Cap at 200 combinations to ensure we don't timeout
+        for combo in all_combos:
             if time.time() - start_time > self.max_time:
                 break
                 
-            # Filter out Nones
             actual_moves = [m for m in combo if m is not None]
             
-            # Simulate
             sim = Simulator(self.state)
             for m in actual_moves:
                 sim.add_launch(m[0], m[1], m[2])
                 
-            sim.simulate_ahead(25) # Lookahead 25 turns
+            sim.simulate_ahead(lookahead)
             score = evaluate_state(sim, self.state.player_id)
-            
-            # Penalize slightly for launching ships to break ties and save ships when useless
             score -= len(actual_moves) * 0.1
             
             if score > best_score:

@@ -6,7 +6,7 @@ import math
 import copy
 
 from world_model import GameState
-from planner import BeamSearchPlanner, GreedyOpeningPlanner
+from planner import BeamSearchPlanner, GreedyPlanner
 from simulator import Simulator
 
 class MockObs:
@@ -66,7 +66,7 @@ def run_match(weights_p0, weights_p1, seed=0, max_turns=300):
         state_p0.params.update(weights_p0)
         
         if step < 16:
-            actions_p0 = GreedyOpeningPlanner(state_p0).generate_moves()
+            actions_p0 = GreedyPlanner(state_p0).generate_moves()
         else:
             actions_p0 = BeamSearchPlanner(state_p0, max_time=0.1).generate_moves() # Fast search for tuning
             
@@ -76,7 +76,7 @@ def run_match(weights_p0, weights_p1, seed=0, max_turns=300):
         state_p1.params.update(weights_p1)
         
         if step < 16:
-            actions_p1 = GreedyOpeningPlanner(state_p1).generate_moves()
+            actions_p1 = GreedyPlanner(state_p1).generate_moves()
         else:
             actions_p1 = BeamSearchPlanner(state_p1, max_time=0.1).generate_moves()
             
