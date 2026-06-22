@@ -255,6 +255,14 @@ class Intel:
         self.enemy_to = defaultdict(int)    # planet_id → total enemy ships inbound
         self.allied_to = defaultdict(int)    # planet_id → total allied ships inbound
         self.by_owner = defaultdict(lambda: defaultdict(int))
+        
+        # Precompute planet trajectories to save CPU
+        self.p_traj = {}
+        for p in state.planets.values():
+            traj = []
+            for t in range(101):  # 100 turns + 1 for sweeping
+                traj.append(p.future(t))
+            self.p_traj[p.id] = traj
 
         for f in state.fleets:
             tid = self._trace(f)
@@ -267,24 +275,43 @@ class Intel:
                 self.enemy_to[tid] += f.ships
 
     def _trace(self, f):
-        """Find which planet a fleet's trajectory will hit first."""
-        ex = f.x + math.cos(f.angle) * 200
-        ey = f.y + math.sin(f.angle) * 200
-        best_id, best_d = None, 1e9
-
-        for p in self.st.planets.values():
-            if seg_circle(f.pos, (ex, ey), p.pos, p.radius):
-                d = dist(f.pos, p.pos)
-                if d < best_d:
-                    best_d, best_id = d, p.id
-
-        # If sun is closer than any planet hit, fleet is destroyed
-        if best_id is not None and seg_circle(f.pos, (ex, ey), CENTER, SUN_RADIUS):
-            sun_d = dist(f.pos, CENTER) - SUN_RADIUS
-            if sun_d < best_d:
+        """Find which planet a fleet's trajectory will hit first, accounting for orbits."""
+        spd = fleet_speed(f.ships)
+        fx, fy = f.pos
+        dx = math.cos(f.angle) * spd
+        dy = math.sin(f.angle) * spd
+        
+        # Fast sun-check over the full trajectory
+        end_x = fx + math.cos(f.angle) * (100 * spd)
+        end_y = fy + math.sin(f.angle) * (100 * spd)
+        sun_hit = seg_circle((fx, fy), (end_x, end_y), CENTER, SUN_RADIUS)
+        sun_dist = dist((fx, fy), CENTER) - SUN_RADIUS if sun_hit else 9999
+        
+        for t in range(1, 100):
+            nx = fx + dx
+            ny = fy + dy
+            
+            if sun_hit and (t * spd) > sun_dist + spd:
                 return None
-
-        return best_id
+                
+            # Fleet movement collision against planet position at start of step
+            for pid, traj in self.p_traj.items():
+                px, py = traj[t - 1]
+                pr = self.st.planets[pid].radius
+                if abs(fx - px) < pr + spd and abs(fy - py) < pr + spd:
+                    if seg_circle((fx, fy), (nx, ny), (px, py), pr):
+                        return pid
+                    
+            fx, fy = nx, ny
+            
+            # Sweeping collision against planet position at end of step
+            for pid, traj in self.p_traj.items():
+                px, py = traj[t]
+                pr = self.st.planets[pid].radius
+                if dist((fx, fy), (px, py)) <= pr:
+                    return pid
+                    
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -352,11 +379,16 @@ class Planner:
         return ang(src_pos, tgt.pos), turns
 
     # ── Sun check ──
-    def _sun_blocked(self, src, angle):
+    def _sun_blocked(self, src, angle, target_pos=None):
         lx = src.x + math.cos(angle) * (src.radius + 0.2)
         ly = src.y + math.sin(angle) * (src.radius + 0.2)
-        fx = lx + math.cos(angle) * 200
-        fy = ly + math.sin(angle) * 200
+        if target_pos:
+            max_d = dist((lx, ly), target_pos)
+            fx = lx + math.cos(angle) * max_d
+            fy = ly + math.sin(angle) * max_d
+        else:
+            fx = lx + math.cos(angle) * 200
+            fy = ly + math.sin(angle) * 200
         return seg_circle((lx, ly), (fx, fy), CENTER, SUN_BUFFER)
 
     # ── Main planning routine ──
@@ -387,7 +419,8 @@ class Planner:
                 if src.id == p.id:
                     continue
                 a, t = self._intercept(src.pos, p, DEFAULT_SPEED)
-                if t > 80 or self._sun_blocked(src, a):
+                tgt_pos = p.future(t)
+                if t > 80 or self._sun_blocked(src, a, tgt_pos):
                     continue
 
                 missions.append({
@@ -417,7 +450,8 @@ class Planner:
                 a1, t1 = self._intercept(src.pos, tgt, DEFAULT_SPEED)
                 if t1 > 200 or t1 < 0:
                     continue
-                if self._sun_blocked(src, a1):
+                tgt_pos1 = tgt.future(t1)
+                if self._sun_blocked(src, a1, tgt_pos1):
                     continue
 
                 # Comet lifetime check
@@ -444,7 +478,8 @@ class Planner:
                 # ── Pass 2: refine with actual speed ──
                 spd = fleet_speed(max(1, need))
                 a2, t2 = self._intercept(src.pos, tgt, spd)
-                if t2 > 200 or self._sun_blocked(src, a2):
+                tgt_pos2 = tgt.future(t2)
+                if t2 > 200 or self._sun_blocked(src, a2, tgt_pos2):
                     continue
 
                 # Recalculate garrison with refined travel time
@@ -559,7 +594,8 @@ class Planner:
                 if best_tgt is not None:
                     spd = fleet_speed(max(1, avail[src.id]))
                     a, t = self._intercept(src.pos, best_tgt, spd)
-                    if not self._sun_blocked(src, a):
+                    tgt_pos = best_tgt.future(t)
+                    if not self._sun_blocked(src, a, tgt_pos):
                         send = max(1, avail[src.id] - 1)
                         moves.append((src.id, a, send))
                         avail[src.id] -= send
@@ -595,14 +631,6 @@ def agent(observation, configuration=None):
             left = p.ships - used[pid]
             ships = min(ships, max(0, left - 1))   # Always keep ≥1 ship
             if ships <= 0:
-                continue
-
-            # Final sun-collision check on the actual launch trajectory
-            lx = p.x + math.cos(angle) * (p.radius + 0.1)
-            ly = p.y + math.sin(angle) * (p.radius + 0.1)
-            fx = lx + math.cos(angle) * 200
-            fy = ly + math.sin(angle) * 200
-            if seg_circle((lx, ly), (fx, fy), CENTER, SUN_BUFFER):
                 continue
 
             actions.append([pid, angle, int(ships)])
